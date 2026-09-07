@@ -1,0 +1,7 @@
+# Modelle werden beim Installieren geladen, nicht eingecheckt (rund 550 MB).
+models/
+*.wav
+*.aiff
+# macOS legt auf exFAT fuer jede Datei eine Metadatendatei an.
+._*
+.DS_Store

@@ -1,0 +1,100 @@
+#!/bin/zsh
+# hear-toggle — eine Taste für alles: erster Druck nimmt auf, zweiter beendet,
+# transkribiert und fügt den Text dort ein, wo der Cursor steht.
+#
+# Auf F19 gelegt über den Dienst ~/Library/Services/Hear Diktat.workflow.
+#
+#   hear-toggle          # Deutsch, mit Einfügen
+#   hear-toggle -l en    # andere Sprache
+#   hear-toggle -n       # nur in die Zwischenablage, nicht einfügen
+#
+# Rückmeldung auf drei Wegen, weil bei einem Tastenkürzel kein Terminal
+# sichtbar ist: Klang, rote Anzeige am oberen Bildschirmrand, Mitteilung.
+
+# Kein "set -e": ein Fehlschlag soll eine Mitteilung erzeugen, nicht stumm enden.
+export PATH="${0:A:h}:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Ohne diese Zeile schreibt pbcopy die UTF-8-Bytes als Mac-Roman in die
+# Zwischenablage: aus "Grüße über Ärger" wird "Gr√º√üe √ºber √Ñrger".
+# Im Terminal faellt das nicht auf, der Dienst startet aber ohne Sprachvariablen.
+export LANG="${LANG:-de_DE.UTF-8}"
+export LC_CTYPE="${LC_CTYPE:-de_DE.UTF-8}"
+
+lang="de"
+paste=1
+while (( $# )); do
+  case "$1" in
+    -l|--language) lang="${2:-de}"; shift 2 ;;
+    -n|--no-paste) paste=0; shift ;;
+    *) shift ;;
+  esac
+done
+
+STATE_DIR="${TMPDIR:-/tmp}/hear-session"
+IND_PID="$STATE_DIR/indicator.pid"
+
+klang() { afplay "/System/Library/Sounds/$1.aiff" >/dev/null 2>&1 & }
+
+melde() {  # $1=Titel  $2=Text
+  osascript -e "display notification \"${2//\"/\\\"}\" with title \"${1//\"/\\\"}\"" >/dev/null 2>&1
+}
+
+anzeige_aus() {
+  if [[ -f "$IND_PID" ]]; then
+    kill "$(cat "$IND_PID" 2>/dev/null)" 2>/dev/null
+    rm -f "$IND_PID"
+  fi
+  # Nachzügler aus früheren Läufen mit aufräumen.
+  pkill -f "hear-indicator" 2>/dev/null
+}
+
+laeuft() {
+  [[ -f "$STATE_DIR/pid" ]] && kill -0 "$(cat "$STATE_DIR/pid" 2>/dev/null)" 2>/dev/null
+}
+
+if laeuft; then
+  # ---------- beenden ----------
+  anzeige_aus
+  klang Pop
+  text="$(hear-stop -l "$lang" 2>/dev/null)"
+
+  if [[ -z "$text" ]]; then
+    klang Basso
+    melde "Nichts erkannt" "Zu leise, zu kurz oder kein Sprachanteil."
+    exit 1
+  fi
+
+  print -rn -- "$text" | pbcopy
+
+  if (( paste )); then
+    # Braucht die Berechtigung „Bedienungshilfen". Klappt das nicht, liegt der
+    # Text trotzdem in der Zwischenablage — deshalb kein harter Abbruch.
+    if ! osascript -e 'tell application "System Events" to keystroke "v" using command down' >/dev/null 2>&1; then
+      melde "Nicht eingefügt" "Text liegt in der Zwischenablage. Bedienungshilfen erlauben?"
+      exit 0
+    fi
+  fi
+
+  klang Glass
+  vorschau="$text"
+  (( ${#vorschau} > 90 )) && vorschau="${vorschau[1,90]}…"
+  melde "Eingefügt" "$vorschau"
+
+else
+  # ---------- starten ----------
+  anzeige_aus
+  if hear-start 600 >/dev/null 2>&1; then
+    mkdir -p "$STATE_DIR"
+    # Das aktive Programm merken und der Anzeige mitgeben, damit sie den
+    # Fokus zurueckgibt — sonst landet das Einfuegen im falschen Fenster.
+    vorn="$(osascript -e 'tell application "System Events" to get name of first process whose frontmost is true' 2>/dev/null)"
+    hear-indicator "$vorn" >/dev/null 2>&1 &
+    print -r -- "$!" > "$IND_PID"
+    klang Tink
+  else
+    klang Basso
+    melde "Start fehlgeschlagen" "Läuft schon eine Aufnahme? Siehe $STATE_DIR"
+    exit 1
+  fi
+fi
+exit 0

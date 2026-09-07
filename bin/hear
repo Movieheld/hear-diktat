@@ -1,0 +1,58 @@
+#!/bin/zsh
+# hear — vom Mikrofon diktieren, Text landet in der Zwischenablage
+#
+#   hear          # aufnehmen, ENTER stoppt, Text -> Zwischenablage + stdout
+#   hear -l en    # Sprache erzwingen (Default: de)
+#   hear -n       # nicht in die Zwischenablage kopieren
+#   hear -k       # WAV-Datei behalten und Pfad ausgeben
+
+set -e
+
+# Nachbarskripte und micrec liegen neben dieser Datei. ${0:A} loest Symlinks
+# auf, ein Link in ~/.local/bin findet sie also trotzdem.
+export PATH="${0:A:h}:$PATH"
+
+lang="de"
+copy=1
+keep=0
+
+while (( $# )); do
+  case "$1" in
+    -l|--language) lang="$2"; shift 2 ;;
+    -n|--no-copy)  copy=0; shift ;;
+    -k|--keep)     keep=1; shift ;;
+    -h|--help)     sed -n '2,7p' "$0" | sed 's/^#[[:space:]]\{0,1\}//'; exit 0 ;;
+    *)             shift ;;
+  esac
+done
+
+command -v micrec >/dev/null || { print -u2 "micrec nicht im PATH."; exit 1; }
+
+wav="${TMPDIR:-/tmp}/hear-$(date +%Y%m%d-%H%M%S).wav"
+
+micrec "$wav" 600 || exit 1
+[[ -s "$wav" ]] || { print -u2 "Keine Aufnahme entstanden."; exit 1; }
+
+print -u2 "… transkribiere"
+text="$(whisper -l "$lang" "$wav" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | paste -sd' ' -)"
+
+if [[ -z "$text" ]]; then
+  print -u2 "Nichts erkannt."
+  if (( ! keep )); then rm -f "$wav"; fi
+  exit 1
+fi
+
+print -r -- "$text"
+
+if (( copy )); then
+  print -rn -- "$text" | pbcopy
+  print -u2 "✓ in der Zwischenablage"
+fi
+
+if (( keep )); then
+  print -u2 "WAV: $wav"
+else
+  rm -f "$wav"
+fi
+
+exit 0

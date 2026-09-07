@@ -1,0 +1,141 @@
+#!/bin/zsh
+# whisper — Audiodatei zu Text (lokal, offline, kostenlos)
+#
+#   whisper aufnahme.m4a            # Sprache automatisch erkennen
+#   whisper -l de interview.mp3     # Sprache erzwingen
+#   whisper --srt video.mp4         # Untertitel-Datei danebenlegen
+#
+# Beliebige Formate: wird per afconvert (macOS-Bordmittel) auf 16 kHz mono gebracht.
+
+set -e
+
+# Alle Pfade relativ zur eigenen Position. ${0:A} loest Symlinks auf, ein Link
+# in ~/.local/bin findet die Nachbardateien also trotzdem.
+#   bin/whisper -> <paket>/whisper.cpp  (selbst gebaut)
+#   bin/whisper -> <paket>/models       (vom Installationsskript abgelegt)
+PAKET="${0:A:h:h}"
+WHISPER_HOME="${WHISPER_HOME:-$PAKET/whisper.cpp}"
+
+# Programm: erst der eigene Build, dann was im PATH liegt (brew install whisper-cpp).
+BIN="${WHISPER_BIN:-}"
+if [[ -z "$BIN" ]]; then
+  for kandidat in "$WHISPER_HOME/build/bin/whisper-cli" "$(command -v whisper-cli 2>/dev/null)"; do
+    [[ -n "$kandidat" && -x "$kandidat" ]] && { BIN="$kandidat"; break }
+  done
+fi
+
+# Modelle an den ueblichen Stellen suchen, statt einen Pfad zu erzwingen.
+suche() {  # $1 = Dateiname -> gibt den ersten Treffer aus
+  local n="$1" k
+  for k in "$WHISPER_HOME/models/$n" "$PAKET/models/$n" "$HOME/.cache/whisper/$n"; do
+    [[ -f "$k" ]] && { print -r -- "$k"; return 0 }
+  done
+  return 1
+}
+# "|| true": ohne das beendet set -e das Skript stillschweigend, sobald suche
+# nichts findet — die Fehlermeldung weiter unten kaeme dann nie.
+MODEL="${WHISPER_MODEL:-$(suche ggml-large-v3-turbo-q5_0.bin || true)}"
+VAD_MODEL="${WHISPER_VAD_MODEL:-$(suche ggml-silero-v5.1.2.bin || true)}"
+
+[[ -n "$BIN" && -x "$BIN" ]] || {
+  print -u2 "whisper-cli nicht gefunden. Entweder 'brew install whisper-cpp',"
+  print -u2 "oder WHISPER_HOME auf einen eigenen Build zeigen lassen."
+  exit 1
+}
+[[ -n "$MODEL" && -f "$MODEL" ]] || {
+  print -u2 "Sprachmodell nicht gefunden (ggml-large-v3-turbo-q5_0.bin)."
+  print -u2 "Gesucht in \$WHISPER_HOME/models, $PAKET/models und ~/.cache/whisper."
+  exit 1
+}
+
+lang="auto"
+extra=()
+files=()
+
+while (( $# )); do
+  case "$1" in
+    -l|--language) lang="$2"; shift 2 ;;
+    --srt)         extra+=(-osrt); shift ;;
+    --vtt)         extra+=(-ovtt); shift ;;
+    --txt)         extra+=(-otxt); shift ;;
+    --ts)          TIMESTAMPS=1; shift ;;
+    --no-vad)      NOVAD=1; shift ;;
+    -h|--help)     sed -n '2,9p' "$0" | sed 's/^#[[:space:]]\{0,1\}//'; exit 0 ;;
+    *)             files+=("$1"); shift ;;
+  esac
+done
+
+(( ${#files} )) || { print -u2 "Nutzung: whisper [-l de] [--srt] <audiodatei>"; exit 2; }
+[[ -n "$TIMESTAMPS" ]] || extra+=(-nt)
+
+# Stille rauswerfen, bevor sie das Modell erreicht — sonst halluziniert es
+# Wiederholungsschleifen ("Vielen Dank." / "Untertitel von ...").
+if [[ -z "$NOVAD" && -f "$VAD_MODEL" ]]; then
+  extra+=(--vad --vad-model "$VAD_MODEL" --vad-speech-pad-ms 200)
+fi
+
+# Anti-Halluzination: kein Temperatur-Fallback, strengere Schwellen,
+# kein Kontext-Übertrag zwischen Segmenten (bricht Wiederholungsschleifen).
+extra+=(-nf -et 2.8 -nth 0.5 --max-context 0)
+
+# Aufräumen auch bei Abbruch (Strg-C) oder wenn set -e doch einmal zuschlägt:
+# sonst bleiben WAV-Dateien in Rohgröße in $TMPDIR liegen.
+tmp=""
+err=""
+cleanup() { [[ -n "$tmp" ]] && rm -f "$tmp"; [[ -n "$err" ]] && rm -f "$err"; return 0 }
+trap cleanup EXIT INT TERM
+
+failed=0
+
+for f in "${files[@]}"; do
+  if [[ ! -f "$f" ]]; then
+    print -u2 "Datei nicht gefunden: $f"
+    failed=$(( failed + 1 ))
+    continue
+  fi
+
+  wav="$f"
+  tmp=""
+
+  # WAV wird durchgereicht; abweichende Abtastraten rechnet whisper.cpp selbst um
+  # (nachgemessen mit 48 kHz Stereo). Alles andere geht durch afconvert.
+  if [[ "${f:l}" != *.wav ]]; then
+    tmp="${TMPDIR:-/tmp}/whisper-$$-${RANDOM}.wav"
+    if ! afconvert -f WAVE -d LEI16@16000 -c 1 "$f" "$tmp" >/dev/null 2>&1; then
+      print -u2 "Konvertierung fehlgeschlagen: $f"
+      rm -f "$tmp"; tmp=""
+      failed=$(( failed + 1 ))
+      continue
+    fi
+    wav="$tmp"
+  fi
+
+  # -of an die ORIGINALdatei binden: sonst schreibt whisper-cli --srt/--vtt/--txt
+  # neben die temporäre WAV in $TMPDIR, wo die Datei verwaist liegen bleibt.
+  #
+  # whisper-cli schreibt seinen Fortschritt nach stderr — deshalb landet der
+  # erst einmal in einer Datei und wird nur bei einem Fehler ausgegeben.
+  #
+  # Der Rückgabewert allein genügt NICHT: bei einer nicht lesbaren Audiodatei
+  # meldet whisper-cli "error: failed to read audio file" und beendet sich
+  # trotzdem mit 0. Mit dem früheren pauschalen 2>/dev/null war eine
+  # gescheiterte Transkription dadurch vollständig unsichtbar.
+  err="${TMPDIR:-/tmp}/whisper-$$-${RANDOM}.err"
+  if ! "$BIN" -m "$MODEL" -f "$wav" -l "$lang" -of "${f:r}" -np "${extra[@]}" 2>"$err" \
+     || grep -q '^error:' "$err"; then
+    print -u2 "Transkription fehlgeschlagen: $f"
+    grep -E '^(error|read_audio_data):' "$err" >&2 || tail -n 20 "$err" >&2
+    failed=$(( failed + 1 ))
+  fi
+
+  rm -f "$err"; err=""
+  [[ -n "$tmp" ]] && { rm -f "$tmp"; tmp="" }
+done
+
+# Rückgabewert sagt die Wahrheit, damit Skripte und Cronjobs einen
+# fehlgeschlagenen Lauf nicht als Erfolg verbuchen.
+if (( failed )); then
+  print -u2 "$failed von ${#files} Datei(en) fehlgeschlagen."
+  exit 1
+fi
+exit 0

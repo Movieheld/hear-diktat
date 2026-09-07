@@ -1,0 +1,51 @@
+#!/bin/zsh
+# hear-start — Aufnahme im Hintergrund starten (kein ENTER nötig)
+# Gestoppt und transkribiert wird mit: hear-stop
+#
+#   hear-start        # bis zu 600s
+#   hear-start 120    # bis zu 120s, danach Auto-Stop
+
+set -e
+
+# Nachbarskripte und micrec liegen neben dieser Datei. ${0:A} loest Symlinks
+# auf, ein Link in ~/.local/bin findet sie also trotzdem.
+export PATH="${0:A:h}:$PATH"
+
+STATE_DIR="${TMPDIR:-/tmp}/hear-session"
+mkdir -p "$STATE_DIR"
+
+if [[ -f "$STATE_DIR/pid" ]] && kill -0 "$(cat "$STATE_DIR/pid")" 2>/dev/null; then
+  print -u2 "Es läuft bereits eine Aufnahme (PID $(cat "$STATE_DIR/pid")). Erst 'hear-stop'."
+  exit 1
+fi
+
+wav="$STATE_DIR/$(date +%Y%m%d-%H%M%S).wav"
+maxsec="${1:-600}"
+fifo="$STATE_DIR/stdin.fifo"
+
+rm -f "$fifo"
+mkfifo "$fifo"
+
+# micrec liest stdin aus der FIFO; solange der Holder sie offen haelt,
+# kommt kein EOF und die Aufnahme laeuft weiter.
+micrec "$wav" "$maxsec" >/dev/null 2>"$STATE_DIR/log" < "$fifo" &
+mic_pid=$!
+
+/bin/sleep "$maxsec" > "$fifo" &
+holder_pid=$!
+
+/bin/sleep 0.5
+if ! kill -0 "$mic_pid" 2>/dev/null; then
+  kill "$holder_pid" 2>/dev/null || true
+  rm -f "$fifo"
+  print -u2 "Recorder startete nicht:"
+  cat "$STATE_DIR/log" >&2 2>/dev/null || true
+  exit 1
+fi
+
+print -r -- "$mic_pid"    > "$STATE_DIR/pid"
+print -r -- "$holder_pid" > "$STATE_DIR/holder"
+print -r -- "$wav"        > "$STATE_DIR/wav"
+
+print "● Aufnahme läuft (max ${maxsec}s)"
+exit 0

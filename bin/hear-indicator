@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""hear-indicator - rote Anzeige waehrend der Aufnahme.
+
+Laeuft, bis der Prozess beendet wird. hear-toggle startet und killt ihn.
+
+Zwei Dinge, die hier Zeit gekostet haben:
+
+1. `overrideredirect(True)` macht das Fenster mit Apples System-Tk (8.5) auf
+   aktuellem macOS **unsichtbar**. Nachgemessen mit Bildschirmfotos: mit dem
+   Schalter erscheint nichts, ohne ihn erscheint das Fenster. Deshalb bleibt
+   es hier ein normales Fenster.
+2. Ein normales Fenster nimmt den Fokus. Das wuerde das automatische Einfuegen
+   ins falsche Programm schicken. Darum bekommt das Skript den Namen des
+   vorherigen Programms und holt es sofort wieder nach vorn.
+
+Nebenbei: macOS zeigt bei laufender Mikrofonaufnahme ohnehin ein oranges
+Mikrofon in der Menueleiste. Diese Anzeige hier ist die auffaelligere Variante.
+"""
+import signal
+import subprocess
+import sys
+import tkinter as tk
+
+BG = "#c0392b"
+FG = "#ffffff"
+
+
+def nach_vorn(app: str) -> None:
+    """Holt das zuvor aktive Programm zurueck in den Vordergrund."""
+    if not app:
+        return
+    subprocess.run(
+        ["osascript", "-e", 'tell application "System Events" to '
+         'set frontmost of first process whose name is "%s" to true' % app],
+        capture_output=True,
+    )
+
+
+def main() -> int:
+    vorheriges = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    root = tk.Tk()
+    root.title("●  Aufnahme  0:00")
+    root.attributes("-topmost", True)
+    root.configure(bg=BG)
+    root.resizable(False, False)
+
+    label = tk.Label(
+        root,
+        text="●  Aufnahme  0:00",
+        bg=BG,
+        fg=FG,
+        font=("Helvetica Neue", 18, "bold"),
+        padx=22,
+        pady=10,
+    )
+    label.pack()
+
+    root.update_idletasks()
+    # Feste Breite, sonst kuerzt macOS den Titel zu "Aufnahme...". Die Hoehe
+    # bleibt minimal, weil der Fensterkoerper mit Tk 8.5 ohne Fokus ohnehin
+    # leer bleibt — sichtbar ist die Titelzeile, und die genuegt.
+    BREITE, HOEHE = 260, 24
+    x = (root.winfo_screenwidth() - BREITE) // 2
+    root.geometry("%dx%d+%d+%d" % (BREITE, HOEHE, x, 60))
+
+    # Erst zeichnen lassen, dann den Fokus zurueckgeben.
+    root.after(300, lambda: nach_vorn(vorheriges))
+
+    zaehler = {"sek": 0}
+
+    def tick() -> None:
+        zaehler["sek"] += 1
+        m, s = divmod(zaehler["sek"], 60)
+        punkt = "●" if zaehler["sek"] % 2 else "○"
+        text = "%s  Aufnahme  %d:%02d" % (punkt, m, s)
+        label.config(text=text)
+        # Der Fensterinhalt zeichnet mit Tk 8.5 ohne Fokus nicht zuverlaessig,
+        # die Titelleiste dagegen malt macOS selbst. Deshalb steht die Anzeige
+        # zusaetzlich im Titel — das ist der Teil, der sicher sichtbar ist.
+        root.title(text)
+        root.update_idletasks()
+        root.after(1000, tick)
+
+    root.after(1000, tick)
+
+    def schliessen(*_args) -> None:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, schliessen)
+    signal.signal(signal.SIGINT, schliessen)
+
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

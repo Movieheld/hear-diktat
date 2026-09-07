@@ -1,0 +1,48 @@
+#!/bin/zsh
+# hear-stop — laufende Aufnahme beenden und transkribieren
+#   hear-stop           # Deutsch
+#   hear-stop -l en     # andere Sprache
+
+set -e
+
+# Nachbarskripte und micrec liegen neben dieser Datei. ${0:A} loest Symlinks
+# auf, ein Link in ~/.local/bin findet sie also trotzdem.
+export PATH="${0:A:h}:$PATH"
+
+lang="de"
+[[ "$1" == "-l" || "$1" == "--language" ]] && { lang="$2"; shift 2; }
+
+STATE_DIR="${TMPDIR:-/tmp}/hear-session"
+[[ -f "$STATE_DIR/wav" ]] || { print -u2 "Keine Aufnahme-Session gefunden."; exit 1; }
+
+wav="$(cat "$STATE_DIR/wav")"
+pid="$(cat "$STATE_DIR/pid" 2>/dev/null || echo '')"
+holder="$(cat "$STATE_DIR/holder" 2>/dev/null || echo '')"
+
+# SIGINT -> micrec stoppt den Recorder sauber und schreibt den WAV-Header
+if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+  kill -INT "$pid" 2>/dev/null || true
+  for i in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || break
+    /bin/sleep 0.1
+  done
+fi
+if [[ -n "$holder" ]]; then kill "$holder" 2>/dev/null || true; fi
+
+rm -f "$STATE_DIR/pid" "$STATE_DIR/holder" "$STATE_DIR/stdin.fifo"
+
+[[ -s "$wav" ]] || { print -u2 "Keine Audiodaten aufgenommen."; exit 1; }
+
+secs=$(afinfo "$wav" 2>/dev/null | awk -F': ' '/estimated duration/{printf "%.1f", $2}')
+print -u2 "Aufnahme gestoppt (${secs:-?}s) — transkribiere …"
+
+text="$(whisper -l "$lang" "$wav" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | paste -sd' ' -)"
+
+if [[ -z "$text" ]]; then
+  print -u2 "Nichts erkannt. WAV liegt noch hier: $wav"
+  exit 1
+fi
+
+print -r -- "$text"
+print -u2 "WAV bleibt liegen: $wav"
+exit 0
