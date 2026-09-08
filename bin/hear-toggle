@@ -63,7 +63,10 @@ if laeuft; then
   if [[ -z "$text" ]]; then
     klang Basso
     melde "Nichts erkannt" "Zu leise, zu kurz oder kein Sprachanteil."
-    exit 1
+    # Exit 0, obwohl nichts herauskam: eine stille Aufnahme ist kein Fehlschlag
+    # des Skripts. Bei Exit 1 legt der Automator-Dienst zusaetzlich einen
+    # Fehlerdialog mit leerem Text ueber die Mitteilung, die schon alles sagt.
+    exit 0
   fi
 
   print -rn -- "$text" | pbcopy
