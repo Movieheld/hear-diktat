@@ -12,7 +12,9 @@
 # sichtbar ist: Klang, rote Anzeige am oberen Bildschirmrand, Mitteilung.
 
 # Kein "set -e": ein Fehlschlag soll eine Mitteilung erzeugen, nicht stumm enden.
-export PATH="${0:A:h}:/usr/bin:/bin:/usr/sbin:/sbin"
+# /opt/homebrew/bin (Apple Silicon) und /usr/local/bin (Intel) muessen mit rein:
+# dort liegt whisper-cli. Ein Dienst startet ohne den PATH der Anmeldeshell.
+export PATH="${0:A:h}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Ohne diese Zeile schreibt pbcopy die UTF-8-Bytes als Mac-Roman in die
 # Zwischenablage: aus "Grüße über Ärger" wird "Gr√º√üe √ºber √Ñrger".
@@ -61,7 +63,10 @@ if laeuft; then
   if [[ -z "$text" ]]; then
     klang Basso
     melde "Nichts erkannt" "Zu leise, zu kurz oder kein Sprachanteil."
-    exit 1
+    # Exit 0, obwohl nichts herauskam: eine stille Aufnahme ist kein Fehlschlag
+    # des Skripts. Bei Exit 1 legt der Automator-Dienst zusaetzlich einen
+    # Fehlerdialog mit leerem Text ueber die Mitteilung, die schon alles sagt.
+    exit 0
   fi
 
   print -rn -- "$text" | pbcopy
