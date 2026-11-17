@@ -42,7 +42,7 @@ den Kurzbefehl **F19** ein.
 Andere Taste, oder gar keine:
 
 ```bash
-./install.sh --key F13     # F13 bis F19 möglich
+./install.sh --key F13     # F1 bis F19 möglich, F1–F12 ggf. mit fn
 ./install.sh --no-key      # nur die Befehle, kein Kurzbefehl
 ```
 

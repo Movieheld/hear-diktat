@@ -163,12 +163,14 @@ WFLOW
   /usr/bin/python3 - "$TASTE" <<'PYEOF'
 import plistlib, subprocess, sys
 
-# Funktionstasten werden als private Unicode-Zeichen hinterlegt: F13 = U+F710
+# Funktionstasten werden als private Unicode-Zeichen hinterlegt: F1 = U+F704
 # bis F19 = U+F716. Der Text "F19" funktioniert an dieser Stelle NICHT.
-FKEYS = {"F%d" % (13 + i): chr(0xF710 + i) for i in range(7)}
+# F1 bis F12 tragen auf Mac-Tastaturen Sonderfunktionen: dort mit fn druecken
+# oder in den Systemeinstellungen die Standard-Funktionstasten einschalten.
+FKEYS = {"F%d" % (1 + i): chr(0xF704 + i) for i in range(19)}
 want = sys.argv[1]
 if want not in FKEYS:
-    sys.exit("Nur F13 bis F19 moeglich, nicht: %s" % want)
+    sys.exit("Nur F1 bis F19 moeglich, nicht: %s" % want)
 
 KEY = "sh.heardiktat.service - Hear Diktat - runWorkflowAsService"
 raw = subprocess.run(["defaults", "export", "pbs", "-"],
