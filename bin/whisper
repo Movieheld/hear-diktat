@@ -16,10 +16,13 @@ set -e
 PAKET="${0:A:h:h}"
 WHISPER_HOME="${WHISPER_HOME:-$PAKET/whisper.cpp}"
 
-# Programm: erst der eigene Build, dann was im PATH liegt (brew install whisper-cpp).
+# Programm: erst der eigene Build, dann was im PATH liegt (brew install whisper-cpp),
+# zuletzt der Link, den das Installationsskript neben diese Datei legt. Den
+# braucht es, wo der PATH karg ist: ein macOS-Dienst (die Diktiertaste) oder
+# ein Cronjob sehen weder Homebrew noch ~/.local/bin.
 BIN="${WHISPER_BIN:-}"
 if [[ -z "$BIN" ]]; then
-  for kandidat in "$WHISPER_HOME/build/bin/whisper-cli" "$(command -v whisper-cli 2>/dev/null)"; do
+  for kandidat in "$WHISPER_HOME/build/bin/whisper-cli" "$(command -v whisper-cli 2>/dev/null)" "${0:A:h}/whisper-cli"; do
     [[ -n "$kandidat" && -x "$kandidat" ]] && { BIN="$kandidat"; break }
   done
 fi

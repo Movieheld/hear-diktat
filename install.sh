@@ -72,6 +72,13 @@ else
   oder whisper.cpp selbst bauen und WHISPER_HOME setzen."
 fi
 
+# Den Fund neben die Skripte verlinken. Die Diktiertaste laeuft als macOS-Dienst
+# mit kargem PATH (/usr/bin:/bin:...), in dem weder Homebrew noch ~/.local/bin
+# liegen: `hear` im Terminal ginge dann, die Taste meldete "Nichts erkannt".
+if WCLI="$(command -v whisper-cli)" && [[ "$WCLI" != "$PAKET/bin/whisper-cli" ]]; then
+  ln -sfn "$WCLI" "$PAKET/bin/whisper-cli"
+fi
+
 # ---------------------------------------------------------------- Modelle
 lade() {  # $1 = Dateiname, $2 = URL, $3 = Beschreibung
   if [[ -f "$PAKET/models/$1" ]]; then
